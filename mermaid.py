@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 from flask import Flask, request, render_template_string, jsonify, send_from_directory
 import os, pathlib, requests
 
