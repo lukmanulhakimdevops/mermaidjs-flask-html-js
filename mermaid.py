@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 from flask import Flask, request, render_template_string, jsonify, send_from_directory
-import os, pathlib, requests
+import pathlib, requests
 
 app = Flask(__name__)
 
+# Remote icon pack URLs
 AWS_REMOTE = "https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/v20.0/dist/aws-icons-mermaid.json"
 GCP_REMOTE = "https://cdn.jsdelivr.net/gh/lukmanulhakimdevops/gcp-icons-for-mermaid-js@refs/heads/main/dist/gcp-icons-mermaid.json"
 
+# Local storage
 PACKS_DIR = pathlib.Path(app.root_path) / "static" / "packs"
 PACKS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -19,290 +21,225 @@ HTML = r"""
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Mermaid + AWS/GCP Icons (Flask)</title>
+  <title>Mermaid + AWS & GCP Architecture Icons</title>
   <style>
-    html, body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
-    .container { max-width: 1200px; margin: 2rem auto; padding: 0 1rem; }
-    textarea { width: 100%; min-height: 260px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 14px; }
-    .grid { display: grid; grid-template-columns: 1fr; gap: 1rem; }
-    @media (min-width: 1000px){ .grid { grid-template-columns: 1fr 1fr; } }
-    .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 1rem; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
-    .row { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap }
-    button, input[type="submit"] { border: 1px solid #d1d5db; padding: .5rem .9rem; border-radius: 10px; background: white; cursor: pointer; }
-    button:hover, input[type="submit"]:hover { background: #f3f4f6; }
-    .muted { color:#6b7280; font-size: .9rem; }
-    .badge { display:inline-block; padding:.2rem .5rem; border:1px solid #e5e7eb; border-radius:.5rem; margin:.15rem; font-size:.8rem; cursor:pointer }
-    #diagram { overflow:auto; border: 1px dashed #e5e7eb; border-radius: 10px; padding:.5rem; min-height: 200px; transform-origin: 0 0; }
-    code { background:#f9fafb; padding:.15rem .35rem; border-radius:.35rem }
-    .error { color:#b91c1c; white-space: pre-wrap; }
-    .notice { padding:.6rem .8rem; border:1px solid #d1fae5; background:#ecfdf5; color:#065f46; border-radius:.6rem; }
-    .warn { padding:.6rem .8rem; border:1px solid #fde68a; background:#fffbeb; color:#92400e; border-radius:.6rem; }
+    body { font-family: system-ui, sans-serif; margin: 1rem; }
+    textarea { width: 100%; min-height: 240px; font-family: monospace; font-size: 14px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .card { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; }
+    #diagram { border:1px dashed #aaa; padding:.5rem; min-height:200px; transform-origin: 0 0; }
+    pre.error { color: #b91c1c; white-space: pre-wrap; }
   </style>
-  <script src="https://unpkg.com/mermaid@11.9.0/dist/mermaid.min.js"></script>
+  <script src="https://unpkg.com/mermaid@11.1.0/dist/mermaid.min.js"></script>
 </head>
 <body>
-  <div class="container">
-    <h1>Mermaid + AWS & GCP Architecture Icons</h1>
+  <h1>Mermaid + AWS & GCP Architecture Icons</h1>
 
-    <div id="packs-banner" class="warn" style="display:none; margin:.75rem 0"></div>
-    <div class="row" style="margin:.5rem 0">
-      <button id="btn-download-packs">Download icon packs (offline)</button>
-      <span class="muted">Status: <span id="packs-status">checking…</span></span>
+  <div>
+    <button id="btn-download-packs">Download icon packs (offline)</button>
+    <button id="btn-reload-icons">Reload icons</button>
+    <span id="packs-status">checking…</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <form id="diagram-form" method="post">
+        <textarea id="code" name="code" placeholder="Type Mermaid code here...">{{ code|safe }}</textarea>
+        <div style="margin-top:.5rem">
+          <button type="button" id="btn-insert-sample-aws">Sample AWS</button>
+          <button type="button" id="btn-insert-sample-gcp">Sample GCP</button>
+          <button type="button" id="btn-insert-sample-hybrid">Sample Hybrid</button>
+          <input type="submit" value="Render" />
+        </div>
+      </form>
+      <div style="margin-top:1rem">
+        <details open>
+          <summary><strong>Available icons</strong></summary>
+          <div id="icon-list">Loading…</div>
+        </details>
+      </div>
     </div>
 
-    <p class="muted">Icon pack sources: <code id="aws-url"></code> & <code id="gcp-url"></code></p>
-
-    <div class="grid">
-      <div class="card">
-        <form id="diagram-form" method="post" action="{{ url_for('index') }}">
-          <div class="row" style="justify-content:space-between">
-            <div><strong>Enter Mermaid code</strong></div>
-            <div class="row">
-              <button type="button" id="btn-insert-sample-aws">Insert sample (AWS)</button>
-              <button type="button" id="btn-insert-sample-gcp">Insert sample (GCP)</button>
-              <input type="submit" value="Render" />
-            </div>
-          </div>
-          <textarea id="code" name="code" placeholder="Type Mermaid code here...">{{ code|safe }}</textarea>
-          <div class="muted" style="margin-top:.5rem">
-            Use <code>architecture-beta</code> and reference icons as <code>aws:icon-name</code> or <code>gcp:icon-name</code>.
-          </div>
-        </form>
-        <div style="margin-top:1rem">
-          <details>
-            <summary><strong>Available icons</strong></summary>
-            <div id="icon-list" class="muted">Loading…</div>
-          </details>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <strong>Result</strong>
+        <div>
+          <button type="button" id="zoom-out">-</button>
+          <button type="button" id="zoom-in">+</button>
+          <button type="button" id="save-png">Save PNG</button>
+          <button type="button" id="save-svg">Save SVG</button>
         </div>
+        <small>Mermaid v<span id="mm-ver"></span></small>
       </div>
-
-      <div class="card">
-        <div class="row" style="justify-content:space-between">
-          <strong>Result</strong>
-          <div class="row">
-            <button type="button" id="zoom-out">-</button>
-            <button type="button" id="zoom-in">+</button>
-            <button type="button" id="save-png">Save PNG</button>
-            <button type="button" id="save-svg">Save SVG</button>
-          </div>
-          <div class="muted">Mermaid v<span id="mm-ver"></span></div>
-        </div>
-        <div id="diagram"></div>
-        <pre id="err" class="error"></pre>
-      </div>
+      <div id="diagram"></div>
+      <pre id="err" class="error"></pre>
     </div>
   </div>
 
 <script>
-  // Remote URLs (fallback if offline packs not present)
   const AWS_REMOTE = '{{ aws_remote }}';
   const GCP_REMOTE = '{{ gcp_remote }}';
-
-  // Local offline URLs served by Flask static
   const AWS_LOCAL = '{{ aws_local }}';
   const GCP_LOCAL = '{{ gcp_local }}';
 
   let AWS_PACK_URL = AWS_REMOTE;
   let GCP_PACK_URL = GCP_REMOTE;
-
-  document.getElementById('aws-url').textContent = 'auto (offline if available)';
-  document.getElementById('gcp-url').textContent = 'auto (offline if available)';
-
   let currentScale = 1;
+  
+  // ## OPTIMASI: Variabel untuk menyimpan data ikon (cache) ##
+  let awsIconData = null;
+  let gcpIconData = null;
+
   mermaid.initialize({ startOnLoad: false, securityLevel: 'loose' });
 
   async function checkPacksStatus() {
-    const r = await fetch('/packs-status').then(r => r.json());
-    const statusEl = document.getElementById('packs-status');
-    const banner = document.getElementById('packs-banner');
+      try {
+          const r = await fetch('/packs-status').then(r => r.json());
+          AWS_PACK_URL = r.aws ? AWS_LOCAL : AWS_REMOTE;
+          GCP_PACK_URL = r.gcp ? GCP_LOCAL : GCP_REMOTE;
+          document.getElementById('packs-status').textContent =
+              `AWS: ${r.aws ? 'offline/local' : 'remote'}, GCP: ${r.gcp ? 'offline/local' : 'remote'}`;
+          // Muat daftar ikon setelah status dicek
+          await loadIconList(); 
+      } catch (e) {
+          document.getElementById('packs-status').textContent = '⚠️ Error checking packs';
+      }
+  }
 
-    if (r.aws && r.gcp) {
-      AWS_PACK_URL = AWS_LOCAL;
-      GCP_PACK_URL = GCP_LOCAL;
-      statusEl.textContent = 'offline ready (AWS + GCP cached)';
-      banner.className = 'notice';
-      banner.style.display = '';
-      banner.textContent = '✅ Icon packs downloaded. Offline mode enabled.';
-    } else {
-      AWS_PACK_URL = r.aws ? AWS_LOCAL : AWS_REMOTE;
-      GCP_PACK_URL = r.gcp ? GCP_LOCAL : GCP_REMOTE;
-      const missing = [];
-      if (!r.aws) missing.push('AWS');
-      if (!r.gcp) missing.push('GCP');
-      statusEl.textContent = missing.length ? ('missing: ' + missing.join(', ')) : 'partial';
-      banner.className = 'warn';
-      banner.style.display = '';
-      banner.textContent = 'ℹ️ Click "Download icon packs (offline)" so this app and mermaid.py can run without internet.';
-    }
+  // ## OPTIMASI: Fungsi ini sekarang mengisi cache ##
+  async function loadIconList() {
+      const listEl = document.getElementById("icon-list");
+      listEl.textContent = 'Loading...';
+      try {
+          // Ambil data dan simpan di cache jika belum ada
+          if (!awsIconData) {
+              awsIconData = await fetch(AWS_PACK_URL).then(r=>r.json()).catch(()=>null);
+          }
+          if (!gcpIconData) {
+              gcpIconData = await fetch(GCP_PACK_URL).then(r=>r.json()).catch(()=>null);
+          }
+
+          const awsIcons = (awsIconData && awsIconData.icons) ? Object.keys(awsIconData.icons) : [];
+          const gcpIcons = (gcpIconData && gcpIconData.icons) ? Object.keys(gcpIconData.icons) : [];
+
+          if (!awsIcons.length && !gcpIcons.length){
+              listEl.textContent = "⚠️ No icons loaded.";
+          } else {
+              listEl.innerHTML =
+                  `<b>AWS icons (${awsIcons.length})</b><br><small>${awsIcons.map(x => "aws:"+x).join(", ")}</small><br><br>` +
+                  `<b>GCP icons (${gcpIcons.length})</b><br><small>${gcpIcons.map(x => "gcp:"+x).join(", ")}</small>`;
+          }
+      } catch(e) {
+          listEl.textContent = "⚠️ Failed to load icon lists.";
+      }
   }
 
   async function downloadPacks() {
-    const btn = document.getElementById('btn-download-packs');
-    btn.disabled = true;
-    btn.textContent = 'Downloading…';
-    try {
-      const r = await fetch('/download-packs', { method: 'POST' }).then(r => r.json());
-      if (r.ok) {
-        await checkPacksStatus();
-        await rebuildIconRegistry(); // re-register with new URLs (local)
-        await setupSamples();
-        alert('✅ Icon packs downloaded. Offline ready.');
-      } else {
-        alert('❌ Failed to download packs: ' + (r.error || 'Unknown error'));
-      }
-    } catch (e) {
-      alert('❌ Failed to download packs: ' + (e.message || e));
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Download icon packs (offline)';
-    }
+      const btn = document.getElementById('btn-download-packs');
+      btn.disabled = true; btn.textContent = 'Downloading…';
+      try {
+          const r = await fetch('/download-packs', { method: 'POST' }).then(r => r.json());
+          if (r.ok) {
+              awsIconData = null; gcpIconData = null; // Reset cache
+              await checkPacksStatus(); 
+              alert('✅ Packs ready.');
+          } else { 
+              alert('❌ Error: ' + (r.error || 'Unknown')); 
+          }
+      } catch(e){ alert('❌ ' + e); }
+      btn.disabled = false; btn.textContent = 'Download icon packs (offline)';
   }
-
   document.getElementById('btn-download-packs').addEventListener('click', downloadPacks);
-
+  
+  document.getElementById('btn-reload-icons').addEventListener('click', async () => {
+      awsIconData = null; gcpIconData = null; // Reset cache
+      await checkPacksStatus();
+      await rebuildIconRegistry();
+  });
+  
+  // ## OPTIMASI: Fungsi ini sekarang menggunakan cache terlebih dahulu ##
   async function rebuildIconRegistry() {
-    // Re-register loaders with the current URLs (offline or remote)
-    mermaid.registerIconPacks([
-      { name: 'aws', loader: () => fetch(AWS_PACK_URL, {cache: 'no-store'}).then(r => r.json()) },
-      { name: 'gcp', loader: () => fetch(GCP_PACK_URL, {cache: 'no-store'}).then(r => r.json()) }
-    ]);
+      mermaid.registerIconPacks([
+          {
+              name: 'aws',
+              loader: async () => {
+                  if (awsIconData) return awsIconData; // Gunakan cache jika ada
+                  awsIconData = await fetch(AWS_PACK_URL).then(r => r.json());
+                  return awsIconData;
+              }
+          },
+          {
+              name: 'gcp',
+              loader: async () => {
+                  if (gcpIconData) return gcpIconData; // Gunakan cache jika ada
+                  gcpIconData = await fetch(GCP_PACK_URL).then(r => r.json());
+                  return gcpIconData;
+              }
+          }
+      ]);
   }
 
   async function renderDiagram() {
-    const el = document.getElementById('diagram');
-    const err = document.getElementById('err');
-    err.textContent = '';
-    el.innerHTML = '';
-    currentScale = 1;
-    el.style.transform = `scale(${currentScale})`;
-    const code = document.getElementById('code').value;
-    try {
-      const { svg, bindFunctions } = await mermaid.render('mmd-' + Date.now(), code);
-      el.innerHTML = svg;
-      if (bindFunctions) bindFunctions(el);
-    } catch (e) {
-      err.textContent = (e && (e.message || e.error || e)) + '\n\nCheck icon pack availability and names.';
-    }
-  }
-
-  document.getElementById('diagram-form').addEventListener('submit', function(ev){
-    ev.preventDefault();
-    renderDiagram();
-  });
-
-  document.getElementById('zoom-in').addEventListener('click', () => {
-    currentScale += 0.1;
-    document.getElementById('diagram').style.transform = `scale(${currentScale})`;
-  });
-  document.getElementById('zoom-out').addEventListener('click', () => {
-    currentScale = Math.max(0.1, currentScale - 0.1);
-    document.getElementById('diagram').style.transform = `scale(${currentScale})`;
-  });
-
-  function download(href, name) { const a = document.createElement('a'); a.href = href; a.download = name; a.click(); }
-  document.getElementById('save-png').addEventListener('click', () => {
-    const svgEl = document.querySelector('#diagram svg'); if (!svgEl) return;
-    const svgData = new XMLSerializer().serializeToString(svgEl);
-    const canvas = document.createElement('canvas'); const bbox = svgEl.getBBox();
-    canvas.width = bbox.width; canvas.height = bbox.height;
-    const ctx = canvas.getContext('2d'); const img = new Image();
-    img.onload = function(){ ctx.drawImage(img,0,0); download(canvas.toDataURL('image/png'),'diagram.png'); }
-    img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
-  });
-  document.getElementById('save-svg').addEventListener('click', () => {
-    const svgEl = document.querySelector('#diagram svg'); if (!svgEl) return;
-    const svgData = new XMLSerializer().serializeToString(svgEl);
-    download('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgData), 'diagram.svg');
-  });
-
-  async function loadIconList(container, url, prefix) {
-      const data = await fetch(url, {cache: 'no-store'}).then(r => r.json());
-      let keys = Object.keys((data && data.icons) || {});
-      if (!keys.length) {
-          const p = document.createElement('p');
-          p.textContent = `No icons found for ${prefix.toUpperCase()}.`;
-          container.appendChild(p);
-          return [];
+      const el = document.getElementById('diagram');
+      const err = document.getElementById('err');
+      err.textContent = ''; el.innerHTML = ''; currentScale = 1;
+      let code = document.getElementById('code').value;
+      try {
+          await rebuildIconRegistry(); // Pastikan registry terbaru sebelum render
+          const { svg, bindFunctions } = await mermaid.render('mmd-' + Date.now(), code);
+          el.innerHTML = svg; if (bindFunctions) bindFunctions(el);
+      } catch (e) {
+          err.textContent = (e.message || e) + '\\n\\nCheck syntax & icon names.';
       }
-      const title = document.createElement('strong');
-      title.textContent = `${prefix.toUpperCase()} Icons (${keys.length}):`;
-      container.appendChild(title);
-
-      const wrapper = document.createElement('div');
-      wrapper.innerHTML = keys.map(k => {
-          let shortName = k.startsWith(prefix + "-") ? k.replace(prefix + "-", "") : k;
-          return `<span class="badge" data-full="${prefix}:${shortName}">${prefix}:${shortName}</span>`;
-      }).join('');
-      container.appendChild(wrapper);
-
-      wrapper.querySelectorAll('.badge').forEach(badge => {
-          badge.addEventListener('click', () => {
-              const textarea = document.getElementById('code');
-              const iconCode = badge.dataset.full;
-              const start = textarea.selectionStart, end = textarea.selectionEnd, text = textarea.value;
-              textarea.value = text.substring(0, start) + iconCode + text.substring(end);
-              textarea.focus();
-              textarea.selectionStart = textarea.selectionEnd = start + iconCode.length;
-              renderDiagram();
-          });
-      });
-
-      return keys;
   }
 
-  async function setupSamples() {
-    try {
-      const container = document.getElementById('icon-list');
-      container.innerHTML = '';
-      await loadIconList(container, AWS_PACK_URL, 'aws');
-      await loadIconList(container, GCP_PACK_URL, 'gcp');
+  document.getElementById('diagram-form').addEventListener('submit', ev => { ev.preventDefault(); renderDiagram(); });
+  document.getElementById('zoom-in').addEventListener('click', () => { currentScale += 0.1; document.getElementById('diagram').style.transform = `scale(${currentScale})`; });
+  document.getElementById('zoom-out').addEventListener('click', () => { currentScale = Math.max(0.1, currentScale - 0.1); document.getElementById('diagram').style.transform = `scale(${currentScale})`; });
 
-      const awsSample = `%%{init: {"theme": "default"}}%%
-architecture-beta
-  group "AWS Cloud"
-    group client(aws:network-amazon-route-53)[Route 53]
-    group web(aws:compute-amazon-ec2)[EC2]
-    group data(aws:database-amazon-rds)[RDS]
-
-    client -->> web: DNS Query
-    web -->> data: DB Connection
-  end`;
-      document.getElementById('btn-insert-sample-aws').addEventListener('click', () => {
-        document.getElementById('code').value = awsSample;
-        renderDiagram();
-      });
-
-      const gcpSample = `%%{init: {"theme": "default"}}%%
-architecture-beta
-  actor "User" as user
-  group "Google Cloud"
-    service(gcp:networking-cloud-load-balancing)[Load Balancer] as lb
-    group "Backend Services"
-        service(gcp:compute-engine)[Compute Engine] as gce
-        service(gcp:databases-cloud-sql)[Cloud SQL] as db
-    end
-    gce -->> db: Reads/Writes
-    lb -->> gce: Forwards Traffic
-  end
-  user -->> lb: Request`;
-      document.getElementById('btn-insert-sample-gcp').addEventListener('click', () => {
-        document.getElementById('code').value = gcpSample;
-        renderDiagram();
-      });
-
-    } catch (e) {
-      document.getElementById('icon-list').textContent = 'Failed to load icon list: ' + (e.message || e);
-    }
-  }
-
-  try { document.getElementById('mm-ver').textContent = mermaid.version; } catch {}
-
-  (async function init(){
-    await checkPacksStatus();
-    await rebuildIconRegistry();
-    await setupSamples();
-    {% if code %} renderDiagram(); {% endif %}
+  function setupSamples() { /* ... (kode yang sudah ada, tidak perlu diubah) ... */ }
+  
+  (async function init() {
+      try {
+          document.getElementById('mm-ver').textContent = mermaid.version;
+          await checkPacksStatus(); // Ini akan memuat list dan mengisi cache
+          await rebuildIconRegistry(); // Ini akan menggunakan cache
+          setupSamples();
+          if (document.getElementById('code').value) { await renderDiagram(); }
+      } catch (e) { console.error("Initialization failed:", e); }
   })();
+  
+  // Implementasi sisa fungsi-fungsi
+  function setupSamples() {
+      const awsSample = `architecture-beta
+  service user(aws:user)[User]
+  group awscloud(aws:aws-cloud)[AWS Cloud]
+    group region(aws:region)[Region] in awscloud
+      group s3bucket(aws:simple-storage-service)[Amazon S3 bucket] in region
+        service video(aws:multimedia)[video] in s3bucket
+      service handler(aws:lambda-lambda-function)[ObjectCreated event handler] in region
+  user:R -[upload]-> L:video
+  handler:T <-[trigger]- B:video`;
+      const gcpSample = `architecture-beta
+  service user(aws:user)[User]
+  group gcpcloud(gcp:google-cloud-marketplace)[GCP Cloud]
+    group bucket(gcp:cloud-storage)[Cloud Storage Bucket] in gcpcloud
+      service video(aws:multimedia)[video] in bucket
+    service trigger(gcp:eventarc)[Eventarc Trigger] in gcpcloud
+  user:R -[upload]-> L:video
+  trigger:T <-[trigger]- B:video`;
+      const hybridSample = `architecture-beta
+  service user(aws:user)[User]
+  group aws(aws:aws-cloud)[AWS Cloud]
+    service s3(aws:simple-storage-service)[S3 Bucket] in aws
+  group gcp(gcp:google-cloud-marketplace)[GCP Cloud]
+    service bq(gcp:bigquery)[BigQuery] in gcp
+  user:R -[upload]-> L:s3
+  s3:R -[etl]-> L:bq`;
+      document.getElementById('btn-insert-sample-aws').onclick = () => { document.getElementById('code').value = awsSample; };
+      document.getElementById('btn-insert-sample-gcp').onclick = () => { document.getElementById('code').value = gcpSample; };
+      document.getElementById('btn-insert-sample-hybrid').onclick = () => { document.getElementById('code').value = hybridSample; };
+  }
 </script>
 </body>
 </html>
@@ -325,10 +262,7 @@ def index():
 
 @app.route('/packs-status')
 def packs_status():
-    return jsonify({
-        "aws": AWS_LOCAL.exists(),
-        "gcp": GCP_LOCAL.exists()
-    })
+    return jsonify({"aws": AWS_LOCAL.exists(), "gcp": GCP_LOCAL.exists()})
 
 @app.route('/download-packs', methods=['POST'])
 def download_packs():
@@ -339,11 +273,9 @@ def download_packs():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
-# (Optional) serve files if needed explicitly
 @app.route('/static/packs/<path:filename>')
 def serve_packs(filename):
     return send_from_directory(PACKS_DIR, filename)
 
 if __name__ == '__main__':
-    # Run on 5001 to match your previous setup
     app.run(host='0.0.0.0', port=5001, debug=True)
