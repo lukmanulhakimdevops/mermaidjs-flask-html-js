@@ -63,8 +63,22 @@ HTML = r"""
     }
     .button-group { display:flex; flex-wrap:wrap; gap:.5rem; }
     .row { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;}
+
+    /* 🔥 Efek flow animasi untuk garis/arrow */
+    .flow-line {
+      stroke-dasharray: 8;
+      stroke-dashoffset: 0;
+      animation: flow 1s linear infinite;
+    }
+    @keyframes flow {
+      to { stroke-dashoffset: -16; }
+    }
   </style>
+
   <script src="https://unpkg.com/mermaid@11.9.0/dist/mermaid.min.js"></script>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
+
 </head>
 <body>
   <h1>Mermaid + AWS, GCP & Logos Architecture Icons</h1>
@@ -108,6 +122,7 @@ HTML = r"""
           <button type="button" id="zoom-in">+</button>
           <button type="button" id="save-png">Save PNG</button>
           <button type="button" id="save-svg">Save SVG</button>
+          <button type="button" id="save-gif">Save GIF</button>
         </div>
         <small>Mermaid v<span id="mm-ver"></span></small>
       </div>
@@ -297,6 +312,14 @@ HTML = r"""
           const { svg, bindFunctions } = await mermaid.render('mmd-' + Date.now(), code);
           el.innerHTML = svg;
           if (bindFunctions) bindFunctions(el);
+
+          // 🔥 Tambahkan efek flow ke garis/arrow
+          const svgEl = el.querySelector("svg");
+          if (svgEl) {
+            svgEl.querySelectorAll("path, line, polyline").forEach(edge => {
+              edge.classList.add("flow-line");
+            });
+          }
       } catch (e) {
           el.style.borderColor = '#b91c1c';
           el.style.backgroundColor = '#fff5f5';
@@ -465,6 +488,161 @@ HTML = r"""
       document.getElementById('btn-insert-sample-gcp').onclick = () => { document.getElementById('code').value = gcpSample; updateUsedIconHighlighting(); renderDiagram(); };
       document.getElementById('btn-insert-sample-hybrid').onclick = () => { document.getElementById('code').value = hybridSample; updateUsedIconHighlighting(); renderDiagram(); };
   }
+
+  /**
+   * Save GIF implementation
+   *
+   * Prinsip:
+   * - Efek flow asli menggunakan CSS animation stroke-dashoffset dari 0 -> -16 setiap 1s.
+   * - Untuk membuat GIF kita harus merender beberapa frame dengan offset berbeda secara manual.
+   * - Proses:
+   * 1. Ambil SVG, temukan semua edge yang memiliki class 'flow-line'
+   * 2. Untuk setiap frame, set inline style strokeDashoffset pada edge-edge tersebut
+   * 3. Serialize SVG ke data URL, gambar ke canvas, tambahkan frame ke GIF
+   * 4. Setelah semua frame selesai, render GIF dan unduh
+   *
+   * Catatan:
+   * - library gif.js dipakai (sudah di-include di <head>)
+   * - kita mengembalikan semua style edge ke keadaan semula setelah selesai
+   */
+  async function saveGIF() {
+    const svgEl = document.querySelector('#diagram svg');
+    if (!svgEl) { alert('Please render a diagram first!'); return; }
+
+    // Pastikan kita punya elemen yang diubah (path/line/polyline) yang diberi class flow-line
+    const edges = Array.from(svgEl.querySelectorAll('.flow-line'));
+    // Dapatkan bbox untuk ukuran canvas
+    const bbox = svgEl.getBBox();
+    const padding = 20;
+    const canvas = document.createElement('canvas');
+    canvas.width = (bbox.width + padding * 2) * currentScale;
+    canvas.height = (bbox.height + padding * 2) * currentScale;
+    const ctx = canvas.getContext('2d');
+
+    // Save original inline styles supaya bisa dipulihkan setelah selesai
+    const originalStyles = edges.map(e => e.getAttribute('style'));
+
+    // Animation parameters
+    const fps = 25;
+    const durationSec = 1.0; // 1 detik loop (sama dengan CSS)
+    const frames = Math.max(8, Math.round(fps * durationSec)); // mis. 25 frames
+    const maxOffset = 16; // sesuai keyframes (0 -> -16)
+
+    // Siapkan GIF encoder (gif.js)
+    const gif = new GIF({
+      workers: 2,
+      quality: 10,
+      workerScript: 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js',
+      width: canvas.width,
+      height: canvas.height
+    });
+
+    // Helper untuk membuat data URL dari SVG saat ini (dengan inline styles telah diterapkan)
+    function svgToDataURL(svgElement) {
+      // Pastikan svg memiliki namespace
+      svgElement.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+      // Serialize
+      const svgData = new XMLSerializer().serializeToString(svgElement);
+      return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgData);
+    }
+
+    // Tambahkan setiap frame ke GIF, menunggu gambar ter-load sebelum menambahkan
+    for (let i = 0; i < frames; i++) {
+      // compute offset: antara 0 dan -maxOffset
+      const t = i / frames;
+      const offset = - (t * maxOffset);
+
+      // Apply inline style stroke-dashoffset ke setiap edge
+      edges.forEach(edge => {
+        // strokeDashoffset dapat diberikan sebagai px
+        edge.style.strokeDashoffset = offset + 'px';
+        // Pastikan stroke-dasharray ter-set (beberapa edge mungkin tidak punya inline)
+        if (!edge.style.strokeDasharray) {
+          // keep as is; merubah via style hanya jika belum ada
+          // Namun kalau stroke-dasharray tidak ada, masih tetap akan terlihat jika class memberi property
+          // Tidak memaksa perubahan di sini.
+        }
+      });
+
+      // Clone SVG untuk serialisasi agar tidak mempengaruhi elemen asli saat image load async
+      const svgClone = svgEl.cloneNode(true);
+
+      // 🔥 PERBAIKAN: Sisipkan CSS yang dibutuhkan untuk animasi langsung ke dalam klon SVG.
+      // Ini penting karena XMLSerializer tidak menyertakan style dari tag <style> dokumen.
+      // Tanpa `stroke-dasharray`, `stroke-dashoffset` yang kita animasikan tidak akan berpengaruh.
+      const styleEl = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+      styleEl.textContent = '.flow-line { stroke-dasharray: 8; }';
+      const defsEl = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+      defsEl.appendChild(styleEl);
+      svgClone.insertBefore(defsEl, svgClone.firstChild);
+
+      // Jika transform (viewBox) atau width/height dibutuhkan, copy atribut penting
+      if (!svgClone.getAttribute('width')) {
+        svgClone.setAttribute('width', bbox.width + padding * 2);
+      }
+      if (!svgClone.getAttribute('height')) {
+        svgClone.setAttribute('height', bbox.height + padding * 2);
+      }
+      // Wrap cloned svg in an svg root with correct viewbox if needed
+      // (serialize the cloned node)
+      const dataUrl = svgToDataURL(svgClone);
+
+      // Convert to Image and draw to canvas (await load)
+      /* eslint-disable no-await-in-loop */
+      await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = function() {
+          // Clear canvas and white background
+          ctx.fillStyle = 'white';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          // draw the SVG image
+          ctx.drawImage(img, padding * currentScale, padding * currentScale, bbox.width * currentScale, bbox.height * currentScale);
+          // add frame to gif
+          gif.addFrame(ctx, {copy: true, delay: Math.round(1000 / fps)});
+          resolve();
+        };
+        img.onerror = function(err) {
+          console.error('Image load error for frame', err);
+          reject(err);
+        };
+        img.src = dataUrl;
+      });
+    }
+
+    // Restore original inline styles
+    edges.forEach((e, idx) => {
+      if (originalStyles[idx] === null) {
+        e.removeAttribute('style');
+      } else {
+        e.setAttribute('style', originalStyles[idx]);
+      }
+    });
+
+    // Render GIF and trigger download when ready
+    gif.on('finished', function(blob) {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'diagram.gif';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    });
+
+    gif.render();
+  }
+
+  // Tombol Save GIF
+  document.getElementById('save-gif').addEventListener('click', () => {
+    try {
+      saveGIF();
+    } catch (err) {
+      console.error('saveGIF failed', err);
+      alert('Gagal membuat GIF: ' + err);
+    }
+  });
+
 </script>
 </body>
 </html>
